@@ -1,0 +1,36 @@
+{
+  "name": "tessel-roam",
+  "version": "1.0.0",
+  "homepage": "https://github.com/reelyactive/tessel-roam/",
+  "author": {
+    "name": "reelyActive",
+    "email": "info@reelyactive.com"
+  },
+  "description": "Collect geolocated radio decodings from a reelyActive Owl-in-One based on the Tessel 2 platform.  We believe in an open Internet of Things.",
+  "main": "index.js",
+  "scripts": {
+    "test": "echo \"Error: no test specified\" && exit 1"
+  },
+  "repository": {
+    "type": "git",
+    "url": "https://github.com/reelyactive/tessel-roam.git"
+  },
+  "keywords": [
+    "reelyActive",
+    "Owl-in-One",
+    "Tessel"
+  ],
+  "dependencies": {
+    "barnowl": "^1.1.1",
+    "barnowl-reel": ">=0.1.10",
+    "barnowl-tcpdump": ">=0.1.5",
+    "raddec": ">=0.2.8",
+    "raddec-filter": ">=0.3.0"
+  },
+  "contributors": [
+    {
+      "name": "Jeffrey Dungen"
+    }
+  ],
+  "license": "MIT"
+}
