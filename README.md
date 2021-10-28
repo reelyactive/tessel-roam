@@ -24,6 +24,14 @@ With the Tessel 2 connected to the programming station via USB, from the root of
 The code will be pushed to flash memory on the Tessel and will run every time it boots.
 
 
+Output
+------
+
+By default, __tessel-roam__ will write to logfiles _roamlog-ble-YYMMDD-HHMMSS.csv_ and _roamlog-wifi-YYMMDD-HHMMSS.csv_, which it will rotate every 60 minutes, the following comma-separated values:
+
+GPS Epoch,CPU Epoch,transmitterId,transmitterIdType,rssi,lat,lon,speed,course
+
+
 Prerequisites
 -------------
 

@@ -31,18 +31,22 @@ const REEL_DECODING_OPTIONS = {
     minPacketLength: 8,
     maxPacketLength: 39
 };
+const RECEIVER_ID_TYPE_BLE = 1;  // EUI-64
+const RECEIVER_ID_TYPE_WIFI = 2; // EUI-48
 
-// GPS readings are global variables
-let lat = null;
-let lon = null;
-let timestamp = null;
+
+// GPS readings and logfile are global variables
+let lat = '';
+let lon = '';
+let speed = '';
+let course = '';
+let timestamp = '';
+let logfile = null;
+
 
 // Set USB GPS serial baud rate
 exec('stty -F "/dev/ttyUSB0" 4800', handleError);
-
-let filepath = path.join(config.storageMountPoint, 'roam-test.txt'); // TODO
 let gps = fs.createReadStream(config.gpsMountPoint, { encoding: 'ascii' }); 
-
 gps.addListener('data', handleNmeaData);
 
 
@@ -64,20 +68,11 @@ if(config.listenToTcpdump) {
   barnowl.addListener(BarnowlTcpdump, {}, BarnowlTcpdump.SpawnListener, {});
 }
 
-// Forward the raddec to each target while pulsing the green LED
+// Write the raddec to logfile while pulsing the green LED
 barnowl.on('raddec', function(raddec) {
   tessel.led[2].on();
   if(filter.isPassing(raddec)) {
-    let flatRaddec = raddec.toFlattened();
-    let csvLine = timestamp + config.csvSeparator +
-                  lat + config.csvSeparator + lon + config.csvSeparator +
-                  flatRaddec.transmitterId + config.csvSeparator +
-                  flatRaddec.transmitterIdType + config.csvSeparator +
-                  flatRaddec.receiverId + config.csvSeparator +
-                  flatRaddec.receiverIdType + config.csvSeparator +
-                  flatRaddec.rssi;
-    fs.writeFile(filepath, csvLine, handleError);
-console.log(csvLine);
+    writeLogfile(raddec);
   }
   tessel.led[2].off();
 });
@@ -97,24 +92,128 @@ function handleNmeaData(data) {
     let rmcEnd = data.indexOf('\n', rmcStart);
 
     if(rmcEnd) {
-      // TODO: check if elements are non-empty
       let elements = data.substring(rmcStart, rmcEnd).split(',');
-      lat = (Math.floor(Number(elements[3]) / 100) +
-             ((Number(elements[3]) * 10000 % 1000000) / 600000)).toFixed(5);
-      lon = (Math.floor(Number(elements[5]) / 100) +
-             ((Number(elements[5]) * 10000 % 1000000) / 600000)).toFixed(5);
-      if(elements[4] === 'S') { lat = -lat; }
-      if(elements[6] === 'W') { lon = -lon; }
-      let day = parseInt(elements[9].substring(0, 2));
-      let month = parseInt(elements[9].substring(2, 4));
-      let year = parseInt(elements[9].substring(4, 6)) + 2000;
-      let hours = parseInt(elements[1].substring(0, 2));
-      let minutes = parseInt(elements[1].substring(2, 4));
-      let seconds = parseInt(elements[1].substring(4, 6));
-      let date = new Date(year, month, day, hours, minutes, seconds);
-      timestamp = date.getTime();
+
+      if(elements[3] === '') { lat = '' }                // Latitute
+      else {
+        lat = (Math.floor(Number(elements[3]) / 100) +
+               ((Number(elements[3]) * 10000 % 1000000) / 600000)).toFixed(5);
+        if(elements[4] === 'S') { lat = -lat; }
+      }
+
+      if(elements[5] === '') { lon = '' }                // Longitude
+      else {
+        lon = (Math.floor(Number(elements[5]) / 100) +
+               ((Number(elements[5]) * 10000 % 1000000) / 600000)).toFixed(5);
+        if(elements[6] === 'W') { lon = -lon; }
+      }
+
+      if(elements[7] === '') { speed = '' }              // Speed
+      else { speed = Number(elements[7]).toFixed(1); }
+
+      if(elements[8] === '') { course = '' }             // Course
+      else { course = Number(elements[8]).toFixed(1); }
+
+      if((elements[9] !== '') && (elements[1] !== '')) { // Time/Date
+        let day = parseInt(elements[9].substring(0, 2));
+        let month = parseInt(elements[9].substring(2, 4));
+        let year = parseInt(elements[9].substring(4, 6)) + 2000;
+        let hours = parseInt(elements[1].substring(0, 2));
+        let minutes = parseInt(elements[1].substring(2, 4));
+        let seconds = parseInt(elements[1].substring(4, 6));
+        let date = new Date(year, month - 1, day, hours, minutes, seconds);
+        timestamp = date.getTime();
+      }
+      else { timestamp = ''; }
     }
   }
+}
+
+
+/**
+ * Write the given raddec to the current logfile.
+ * @param {Object} raddec The raddec to write.
+ */
+function writeLogfile(raddec) {
+  if(timestamp === '') {
+    return; // TODO: handle absence of GPS time?
+  }
+
+  let logfileRotationThreshold = timestamp -
+                                 (config.logfileMinutesToRotation * 60000);
+  let isNewLogfileRequired = !logfile || (logfile.lastRotationTimestamp <
+                                          logfileRotationThreshold);
+
+  if(isNewLogfileRequired) {
+    createNewLogfile();
+  }
+
+  let flatRaddec = raddec.toFlattened();
+  let csvLine = timestamp + config.logfileDelimiter +
+                Date.now() + config.logfileDelimiter +
+                flatRaddec.transmitterId + config.logfileDelimiter +
+                flatRaddec.transmitterIdType + config.logfileDelimiter +
+                flatRaddec.rssi + config.logfileDelimiter +
+                lat + config.logfileDelimiter + lon + config.logfileDelimiter +
+                speed + config.logfileDelimiter + course + '\r\n';
+
+  if(flatRaddec.receiverIdType === RECEIVER_ID_TYPE_BLE) {
+    logfile.writeStreamBle.write(csvLine);
+  }
+  else if(flatRaddec.receiverIdType === RECEIVER_ID_TYPE_WIFI) {
+    logfile.writeStreamWiFi.write(csvLine);
+  }
+}
+
+
+/**
+ * Create a new logfile, closing the previous logfile, if applicable.
+ */
+function createNewLogfile() {
+  if(logfile) {
+    logfile.writeStreamBle.end();
+    logfile.writeStreamWiFi.end();
+  }
+
+  let filenameBle = config.logfileNamePrefix + '-ble-' +
+                    createCurrentTimeString(timestamp) +
+                    config.logfileExtension;
+  let filepathBle = path.join(config.storageMountPoint, filenameBle);
+  let writeStreamBle = fs.createWriteStream(filepathBle, { flags: "a" });
+
+  let filenameWiFi = config.logfileNamePrefix + '-wifi-' +
+                     createCurrentTimeString(timestamp) +
+                     config.logfileExtension;
+  let filepathWiFi = path.join(config.storageMountPoint, filenameWiFi);
+  let writeStreamWiFi = fs.createWriteStream(filepathWiFi, { flags: "a" });
+
+  logfile = {
+      writeStreamBle: writeStreamBle,
+      writeStreamWiFi: writeStreamWiFi,
+      lastRotationTimestamp: timestamp
+  }
+
+  writeStreamBle.on('error', handleError);
+  writeStreamWiFi.on('error', handleError);
+}
+
+
+/**
+ * Return a time/date string in the form YYMMDD-HHMMSS
+ * @param {Number} timestamp The timestamp as a UNIX epoch.
+ * @return {String} The thirteen-digit string.
+ */
+function createCurrentTimeString(timestamp) {
+  let date = new Date(timestamp);
+  let timestring = date.getFullYear().toString().slice(-2);
+  timestring += ('0' + (date.getMonth() + 1)).slice(-2);
+  timestring += ('0' + date.getDate()).slice(-2);
+  timestring += '-';
+  timestring += ('0' + date.getHours()).slice(-2);
+  timestring += ('0' + date.getMinutes()).slice(-2);
+  timestring += ('0' + date.getSeconds()).slice(-2);
+
+  return timestring;
 }
 
 
